@@ -23,10 +23,6 @@ def q(x: float) -> float:
     return -A * (O_m ** 2) * sin(O_m * x + Th_0)
 
 
-def q_x(x: float) -> float:
-    return -A * (O_m ** 3) * cos(O_m * x + Th_0)
-
-
 def k(x: float) -> float:
     return abs(q(x)) / (1 + p(x) ** 2)**(3 / 2)
 
@@ -39,22 +35,7 @@ def vn_x_max(x: float, dx: float = 1e-6) -> float:
     return (vn_max(x + dx) - vn_max(x)) / dx
 
 
-def cur_a_max(x: float) -> float:
-    return vn_x_max(x) * vn_max(x) / sqrt(1 + p(x) ** 2)
-
-
-def dl(x: float, dx: float = 1e-6) -> float:
-    return sqrt(1 + (p(x)) ** 2) * dx
-
-
-def length(a: float, b: float, dx: float = 1e-6) -> float:
-    res = 0
-    while a < b:
-        res += sqrt(1 + (p(a)) ** 2) * dx
-        a += dx
-    return res
-
-
+# Returns the greatest element that less than given
 def lower(elem: float, ls: list[float]) -> int:
     for idx, i in enumerate(ls):
         if i >= elem:
@@ -62,29 +43,32 @@ def lower(elem: float, ls: list[float]) -> int:
     return len(ls) - 1
 
 
+# Obtain Delta x
 def get_crit_dis(dt: float):
-    v_crit = 1.441275
-    fx_s = 0.34090196
+    v_crit = 1.441275  # V_entry
+    fx_s = 0.34090196  # X_left
     tau = (V_MAX - v_crit) / AT_MAX
 
     t = 0
     x_c = fx_s
     v_c = v_crit
-
+    # Numeric integration
     while t < tau:
-        x_c -= v_crit * dt / sqrt(1 + p(x_c) ** 2)
+        x_c -= v_c * dt / sqrt(1 + p(x_c) ** 2)
         v_c += AT_MAX * dt
         t += dt
 
     return fx_s - x_c
 
 
+# Get 4 - x_stop
 def get_end_dis(x_e: float, dt: float):
     tau = V_MAX / AT_MAX
 
     x_c = x_e
     v_c = 0
     t = 0
+    # Numeric integration
     while t < tau:
         x_c -= v_c * dt / sqrt(1 + p(x_c) ** 2)
         v_c += AT_MAX * dt
@@ -93,12 +77,13 @@ def get_end_dis(x_e: float, dt: float):
     return x_e - x_c
 
 
+# Get velocity dependency from t
 def get_vs(x_s: float, x_e: float, dt: float):
-    fx_s = 0.34090196
-    fx_e = 0.57296155
-    crit_x = [(fx_s if i % 2 == 0 else fx_e) + (i // 2) * pi / O_m for i in range(4 * 2)]
-    crit_d = get_crit_dis(dt)
-    end_d = get_end_dis(x_e, dt)
+    fx_s = 0.34090196  # D' first left border
+    fx_e = 0.57296155  # D' first right border
+    crit_x = [(fx_s if i % 2 == 0 else fx_e) + (i // 2) * pi / O_m for i in range(4 * 2)]  # D'
+    crit_d = get_crit_dis(dt)  # Delta x
+    end_d = get_end_dis(x_e, dt)  # 4 - x_stop
 
     x_c = x_s
     v_c = 0
@@ -106,6 +91,7 @@ def get_vs(x_s: float, x_e: float, dt: float):
     v = []
     t = 0
 
+    # Numerical integration
     while x_c < x_e:
         idx_1 = lower(x_c, crit_x)
         idx_2 = lower(x_c + crit_d, crit_x)
@@ -118,15 +104,16 @@ def get_vs(x_s: float, x_e: float, dt: float):
 
         x_c += v_c * dt / sqrt(1 + p(x_c) ** 2)
         if idx_1 % 2 == 0:
-            v_c = vn_max(x_c)
+            v_c = vn_max(x_c)  # Inside D'
         else:
             if 0 <= v_c + cur_a * dt <= V_MAX:
-                v_c += cur_a * dt
+                v_c += cur_a * dt  # Outside D'
         t += dt
 
     return v, t
 
 
+# Get coordinate dependency from t
 def get_xyt(v: list[float], dt: float) -> tuple[list[float], list[float]]:
     xst = []
     yst = []
@@ -142,18 +129,25 @@ def get_xyt(v: list[float], dt: float) -> tuple[list[float], list[float]]:
     return xst, yst
 
 
+# Filter noice after numerical differentiating
 def filter_h_v(ls: list[float], max_val: float, error: float = 1e-4):
     for i, v in enumerate(ls):
         if abs(v - max_val) > error and abs(v) > max_val:
             ls[i] = copysign(max_val, v)
 
 
+# Obtain acceleration dependency from t
 def at_an_t(v: list[float], xs: list[float], dt: float) -> tuple[list[float], list[float]]:
     at = []
     an = []
+    dl = 3
 
-    for vel, vel_next, x_ in zip(v, v[1:], xs):
-        at.append((vel_next - vel) / dt)
+    for vel, vel_next in zip(v, v[dl:]):
+        at.append((vel_next - vel) / (dt * dl))
+    for _ in range(dl):
+        at.append(at[-1])
+
+    for vel, x_ in zip(v, xs):
         an.append(k(x_) * vel ** 2)
 
     filter_h_v(at, AT_MAX)
@@ -167,12 +161,13 @@ def main():
     x_s = 0
     x_e = 4
 
-    v, tau = get_vs(x_s, x_e, dt)
+    v, tau = get_vs(x_s, x_e, dt)  # Tau is total time
 
     t = np.linspace(0, tau, int(tau / dt))
     xs = np.linspace(x_s, x_e, 1000)
     ys = np.array([y(x) for x in xs])
 
+    # Plots
     title('$y(x)$')
     plot(xs, ys, 'b', label='$y(x)$', linewidth=1.0)
     grid(color='black', linestyle='--', linewidth=1.0, alpha=0.7)
@@ -216,8 +211,8 @@ def main():
 
     at, an = at_an_t(v, xs, dt)
     title('$a_t(t)$, $a_n(t)$')
-    plot(t[:-1], at, 'r', label='$a_t(t)$', linewidth=1.0)
-    plot(t[:-1], an, 'b', label='$a_n(t)$', linewidth=1.0)
+    plot(t, at, 'r', label='$a_t(t)$', linewidth=1.0)
+    plot(t, an, 'b', label='$a_n(t)$', linewidth=1.0)
     grid(color='black', linestyle='--', linewidth=1.0, alpha=0.7)
     grid(True)
     xlim([0, tau])
